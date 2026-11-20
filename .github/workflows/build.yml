@@ -1,0 +1,66 @@
+name: Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows (Standalone + VST3)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -A x64
+      - name: Build
+        run: cmake --build build --config Release --parallel --target BassCode_Standalone BassCode_VST3 bass_tests
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+      - name: Collect
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item "build/BassCode_artefacts/Release/Standalone/Bass Code.exe" "dist/Bass Code.exe"
+          Copy-Item -Recurse "build/BassCode_artefacts/Release/VST3/Bass Code.vst3" "dist/Bass Code.vst3"
+          Get-ChildItem -Recurse dist -Include *.pdb,*.lib,*.exp | Remove-Item
+      - name: Installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (!(Test-Path $iscc)) { choco install innosetup -y --no-progress; }
+          $v = (Select-String -Path CMakeLists.txt -Pattern 'project\(BassCode VERSION ([0-9.]+)').Matches[0].Groups[1].Value
+          & $iscc "/DAppVersion=$v" installer/BassCode.iss
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Publish to the repo
+        if: github.event_name != 'pull_request'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force Release/Windows | Out-Null
+          $v = (Select-String -Path CMakeLists.txt -Pattern 'project\(BassCode VERSION ([0-9.]+)').Matches[0].Groups[1].Value
+          Copy-Item "dist/Bass Code * Instalador.exe" Release/Windows/
+          Compress-Archive -Force -Path "dist/Bass Code.exe" -DestinationPath "Release/Windows/Bass Code $v Standalone Windows.zip"
+          Compress-Archive -Force -Path "dist/Bass Code.vst3" -DestinationPath "Release/Windows/Bass Code $v VST3 Windows.zip"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Release/Windows
+          git diff --cached --quiet
+          if ($LASTEXITCODE) {
+            git commit -m "Windows build from CI (MSVC) [skip ci]"
+            for ($i = 0; $i -lt 5; $i++) { git pull --rebase origin main; git push origin HEAD:main; if (!$LASTEXITCODE) { break }; Start-Sleep 10 }
+          }
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bass-code-windows-${{ github.sha }}
+          path: dist/
+          retention-days: 14
