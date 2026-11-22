@@ -10,6 +10,8 @@
 
 using namespace bass;
 
+#include "Audition.inc"
+
 static int failures = 0, checks = 0;
 static void expect(bool ok, const juce::String& what) {
     ++checks;
@@ -106,6 +108,39 @@ int main() {
         Processor other;
         other.setStateInformation(mb.getData(), (int) mb.getSize());
         expect(other.getPattern().notes.size() == proc.getPattern().notes.size(), "state keeps the pattern");
+    }
+
+    // ---- audition: one MP3-ready WAV per candidate sound
+    juce::File aud(juce::SystemStats::getEnvironmentVariable("BASS_AUDITION_DIR", {}));
+    if (aud != juce::File()) {
+        aud.createDirectory();
+        juce::String lastGenre; int num = 0;
+        for (auto& c : candidates) {
+            if (lastGenre != c.genre) { lastGenre = c.genre; num = 0; }
+            ++num;
+            Engine e; e.prepare(48000.0, 512);
+            e.synthRef().setPresetDirect(c.p);
+            e.setMacros({});
+            GenSettings g { c.genStyle, 9, 0, c.groove, 4, 1, 3 };   // A minor, same line for every sound of a genre
+            auto pat = generate(g);
+            FxSettings fx; fx.lowpass = 0.85f; fx.reverb = 0.10f; fx.sidechain = 0.35f;
+            const double beats = pat.steps() / 4.0;
+            const int n = (int) (beats * 60.0 / c.bpm * 48000.0);
+            juce::AudioBuffer<float> buf(2, n);
+            for (int i = 0; i < n; i += 512) {
+                const int len = std::min(512, n - i);
+                e.render(buf.getWritePointer(0, i), buf.getWritePointer(1, i), len, i * c.bpm / 60.0 / 48000.0, c.bpm, pat, true, fx);
+            }
+            auto dir = aud.getChildFile(juce::String(c.genre).replace(" ", "-").toLowerCase());
+            dir.createDirectory();
+            auto f = dir.getChildFile(juce::String(num).paddedLeft('0', 2) + " " + c.p.name + ".wav");
+            f.deleteFile();
+            juce::WavAudioFormat wav;
+            auto os = f.createOutputStream();
+            std::unique_ptr<juce::AudioFormatWriter> w(wav.createWriterFor(os.get(), 48000.0, 2, 16, {}, 0));
+            if (w) { os.release(); w->writeFromAudioSampleBuffer(buf, 0, n); }
+            expect(buf.getMagnitude(0, 0, n) < 0.95f && buf.getRMSLevel(0, 0, n) > 0.02f, juce::String("audition ") + c.p.name);
+        }
     }
 
     // ---- editor snapshot

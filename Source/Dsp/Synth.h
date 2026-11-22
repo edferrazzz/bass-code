@@ -37,6 +37,7 @@ class BassSynth {
 public:
     void prepare(double sampleRate);
     void setPreset(int index);
+    void setPresetDirect(const Preset& p) { pre = p; }
     void setMacros(const Macros& m) { macros = m; }
     void setTempo(double bpm) { tempo = bpm > 20.0 ? bpm : 120.0; }
     void setSongPosition(double ppq) { lfoPpq = ppq; }
