@@ -23,6 +23,7 @@ set_target_properties(bass_assets PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 set(BASS_SOURCES
  Source/Core/Music.cpp Source/Core/Music.h
+    Source/Core/Genres.cpp Source/Core/Genres.h
  Source/Dsp/Synth.cpp Source/Dsp/Synth.h
  Source/Dsp/Fx.cpp Source/Dsp/Fx.h
  Source/Processor.cpp Source/Processor.h

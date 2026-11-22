@@ -34,23 +34,23 @@ void Engine::schedule(const Pattern& p, double from, double to) {
     // slides first (legato), then note-offs, then fresh notes
     for (auto& n : p.notes)
         if (n.slide && inside(n.start / 4.0)) {
-            synth.noteOn(n.pitch, n.velocity, true);
-            if (sounding >= 0 && sounding != n.pitch) synth.noteOff(sounding);
-            sounding = n.pitch;
+            synth.noteOn(n.pitch + transpose, n.velocity, true);
+            if (sounding >= 0 && sounding != n.pitch + transpose) synth.noteOff(sounding);
+            sounding = n.pitch + transpose;
         }
     for (auto& n : p.notes) {
         const double off = (n.start + n.length) / 4.0 - 0.004;
-        if (inside(off) && sounding == n.pitch) {
+        if (inside(off) && sounding == n.pitch + transpose) {
             bool slideNext = false;   // a slide starting right here keeps the voice alive
             for (auto& m : p.notes) if (m.slide && m.start == (n.start + n.length) % p.steps()) slideNext = true;
-            if (!slideNext) { synth.noteOff(n.pitch); sounding = -1; }
+            if (!slideNext) { synth.noteOff(sounding); sounding = -1; }
         }
     }
     for (auto& n : p.notes)
         if (!n.slide && inside(n.start / 4.0)) {
-            if (sounding >= 0 && sounding != n.pitch) synth.noteOff(sounding);
-            synth.noteOn(n.pitch, n.velocity, false);
-            sounding = n.pitch;
+            if (sounding >= 0 && sounding != n.pitch + transpose) synth.noteOff(sounding);
+            synth.noteOn(n.pitch + transpose, n.velocity, false);
+            sounding = n.pitch + transpose;
         }
 }
 
@@ -77,49 +77,45 @@ void Engine::render(float* left, float* right, int n, double ppq, double bpm, co
 // Parameters
 // ===========================================================================
 namespace id {
-constexpr auto style = "style", key = "key", scale = "scale", groove = "groove", sound = "sound", bars = "bars",
-               density = "density", bpm = "bpm", sub = "sub", drive = "drive", movement = "movement", punch = "punch",
-               lpOn = "lpOn", lp = "lp", sweep = "sweep", revOn = "revOn", rev = "rev", dlyOn = "dlyOn", dly = "dly",
-               scOn = "scOn", sc = "sc", volume = "volume";
+constexpr auto style = "style", arrange = "arrange", key = "key", scale = "scale", sound = "sound", bars = "bars",
+               density = "density", bpm = "bpm", syncBpm = "syncBpm", sub = "sub", drive = "drive", movement = "movement",
+               punch = "punch", automation = "automation", autoAmt = "autoAmt", rev = "rev", dly = "dly", sc = "sc",
+               volume = "volume";
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout Processor::createLayout() {
     using namespace juce;
     AudioProcessorValueTreeState::ParameterLayout l;
-    StringArray styles, keys { "PADRAO" }, scaleNames { "PADRAO" };
-    for (int s = 0; s < numStyles; ++s) styles.add(style(s).name);
+    StringArray styleNames, keys { "PADRAO" }, scaleNames { "PADRAO" }, autos;
+    for (auto& g : genres()) styleNames.add(g.name);
     for (int k = 0; k < 12; ++k) keys.add(noteName(k));
     for (auto& s : scales()) scaleNames.add(s.name);
+    for (int a = 0; a < numAutomations; ++a) autos.add(String::fromUTF8(automationName(a)));
     auto choice = [&](const char* pid, const char* name, StringArray items, int def) {
         l.add(std::make_unique<AudioParameterChoice>(ParameterID { pid, 1 }, name, items, def));
     };
     auto flt = [&](const char* pid, const char* name, float def) {
         l.add(std::make_unique<AudioParameterFloat>(ParameterID { pid, 1 }, name, NormalisableRange<float>(0.0f, 1.0f), def));
     };
-    auto flag = [&](const char* pid, const char* name, bool def) {
-        l.add(std::make_unique<AudioParameterBool>(ParameterID { pid, 1 }, name, def));
-    };
-    choice(id::style, "Style", styles, 0);
+    const auto& g0 = genres()[0];
+    choice(id::style, "Style", styleNames, 0);
+    l.add(std::make_unique<AudioParameterInt>(ParameterID { id::arrange, 1 }, "Arranjo", 0, 5, 0));   // 0 = PADRAO
     choice(id::key, "Tom", keys, 0);
     choice(id::scale, "Escala", scaleNames, 0);
-    l.add(std::make_unique<AudioParameterInt>(ParameterID { id::groove, 1 }, "Groove", 0, 2, 0));
-    l.add(std::make_unique<AudioParameterInt>(ParameterID { id::sound, 1 }, "Sound", 0, 5, 0));
+    l.add(std::make_unique<AudioParameterInt>(ParameterID { id::sound, 1 }, "Sound", 0, (int) sounds().size() - 1, 0));
     choice(id::bars, "Bars", { "2", "4", "8" }, 1);
     choice(id::density, "Density", { "LOW", "MID", "HIGH" }, 1);
-    l.add(std::make_unique<AudioParameterInt>(ParameterID { id::bpm, 1 }, "BPM", 60, 200, 145));
+    l.add(std::make_unique<AudioParameterInt>(ParameterID { id::bpm, 1 }, "BPM", 60, 200, g0.bpm));
+    l.add(std::make_unique<AudioParameterBool>(ParameterID { id::syncBpm, 1 }, "Sync BPM", false));
     flt(id::sub, "Sub", 0.6f);
     flt(id::drive, "Drive", 0.45f);
     flt(id::movement, "Movimento", 0.55f);
     flt(id::punch, "Punch", 0.7f);
-    flag(id::lpOn, "Lowpass On", true);
-    flt(id::lp, "Lowpass", 0.62f);
-    flag(id::sweep, "Sweep", false);
-    flag(id::revOn, "Reverb On", true);
-    flt(id::rev, "Reverb", 0.10f);
-    flag(id::dlyOn, "Delay On", false);
-    flt(id::dly, "Delay", 0.3f);
-    flag(id::scOn, "Sidechain On", true);
-    flt(id::sc, "Sidechain", 0.35f);
+    choice(id::automation, "Automacao", autos, g0.automation);
+    flt(id::autoAmt, "Automacao Intensidade", 0.8f);
+    flt(id::rev, "Reverb", g0.reverb);
+    flt(id::dly, "Delay", g0.delay);
+    flt(id::sc, "Sidechain", g0.sidechain);
     flt(id::volume, "Volume", 0.8f);
     return l;
 }
@@ -140,6 +136,7 @@ bool Processor::isBusesLayoutSupported(const BusesLayout& layouts) const {
 
 void Processor::prepareToPlay(double sampleRate, int samplesPerBlock) {
     engine.prepare(sampleRate, samplesPerBlock);
+    liveRate = sampleRate > 0 ? sampleRate : 48000.0;
     internalPpq = 0.0;
 }
 
@@ -149,13 +146,23 @@ static int intParam(const juce::AudioProcessorValueTreeState& s, const char* pid
 static float fParam(const juce::AudioProcessorValueTreeState& s, const char* pid) {
     return s.getRawParameterValue(pid)->load();
 }
+static const Genre& genreOf(const juce::AudioProcessorValueTreeState& s) {
+    return genres()[(size_t) juce::jlimit(0, (int) genres().size() - 1, intParam(s, id::style))];
+}
+
+int Processor::currentArrangement() const {
+    const auto& g = genreOf(state);
+    const int a = intParam(state, id::arrange);
+    return juce::jlimit(0, (int) g.arrangements.size() - 1, a == 0 ? lastArrangement : a - 1);
+}
 
 GenSettings Processor::currentGenSettings() const {
     GenSettings g;
-    g.style = intParam(state, id::style);
+    const auto& arr = genreOf(state).arrangements[(size_t) currentArrangement()];
+    g.style = arr.engine;
+    g.groove = arr.groove;
     g.key = intParam(state, id::key) - 1;
     g.scale = intParam(state, id::scale) - 1;
-    g.groove = intParam(state, id::groove);
     g.bars = std::array<int, 3> { 2, 4, 8 }[(size_t) juce::jlimit(0, 2, intParam(state, id::bars))];
     g.density = intParam(state, id::density);
     g.seed = seed;
@@ -163,25 +170,31 @@ GenSettings Processor::currentGenSettings() const {
 }
 
 int Processor::currentPresetIndex() const {
-    const auto& sd = style(intParam(state, id::style));
-    return sd.sounds[(size_t) juce::jlimit(0, (int) sd.sounds.size() - 1, intParam(state, id::sound))];
+    return juce::jlimit(0, (int) sounds().size() - 1, intParam(state, id::sound));
 }
 
 int Processor::currentBpm() const { return intParam(state, id::bpm); }
 
 FxSettings Processor::currentFx() const {
     FxSettings f;
-    f.lowpassOn = fParam(state, id::lpOn) > 0.5f;
-    f.lowpass = fParam(state, id::lp);
-    f.sweep = fParam(state, id::sweep) > 0.5f;
-    f.reverbOn = fParam(state, id::revOn) > 0.5f;
+    f.automation = intParam(state, id::automation);
+    f.automationAmount = fParam(state, id::autoAmt);
     f.reverb = fParam(state, id::rev);
-    f.delayOn = fParam(state, id::dlyOn) > 0.5f;
     f.delay = fParam(state, id::dly);
-    f.sidechainOn = fParam(state, id::scOn) > 0.5f;
     f.sidechain = fParam(state, id::sc);
     f.volume = fParam(state, id::volume);
     return f;
+}
+
+static int nearestShift(int fromPc, int toPitch) {
+    return ((toPitch % 12 - fromPc) % 12 + 12 + 6) % 12 - 6;
+}
+
+int Processor::playInKey(int pitch) {
+    const int t = nearestShift(pattern.key, pitch);
+    transposeUi = t;
+    setPreviewing(true);
+    return t;
 }
 
 Macros Processor::currentMacros() const {
@@ -201,6 +214,13 @@ void Processor::setPattern(const Pattern& p) {
 }
 
 void Processor::generate(bool variation) {
+    if (!variation && intParam(state, id::arrange) == 0) {   // PADRAO: any arrangement of the style
+        const int n = (int) genreOf(state).arrangements.size();
+        int next = juce::Random::getSystemRandom().nextInt(n);
+        if (n > 1 && next == lastArrangement) next = (next + 1 + juce::Random::getSystemRandom().nextInt(n - 1)) % n;
+        lastArrangement = next;
+    }
+    transposeUi = 0;
     seed = seed * 1103515245u + 12345u + (uint32_t) juce::Time::getMillisecondCounter();
     pattern = variation ? bass::generate(currentGenSettings(), &pattern) : bass::generate(currentGenSettings());
     publishPattern();
@@ -212,18 +232,19 @@ void Processor::regenerateKeepSeed() {
 }
 
 void Processor::applyStyleDefaults() {
-    const auto& sd = style(intParam(state, id::style));
+    const auto& g = genreOf(state);
     auto set = [&](const char* pid, float plain) {
         if (auto* p = state.getParameter(pid)) p->setValueNotifyingHost(p->convertTo0to1(plain));
     };
-    set(id::groove, 0.0f);
-    set(id::sound, 0.0f);
-    set(id::bpm, (float) sd.defaultBpm);
-    set(id::lp, sd.lowpass);
-    set(id::sweep, sd.sweep ? 1.0f : 0.0f);
-    set(id::rev, sd.reverb);
-    set(id::dlyOn, sd.delayOn ? 1.0f : 0.0f);
-    set(id::sc, sd.sidechain);
+    lastArrangement = 0;
+    transposeUi = 0;
+    set(id::arrange, 0.0f);
+    set(id::sound, (float) firstSoundOfGenre(intParam(state, id::style)));
+    set(id::bpm, (float) g.bpm);
+    set(id::automation, (float) g.automation);
+    set(id::rev, g.reverb);
+    set(id::dly, g.delay);
+    set(id::sc, g.sidechain);
 }
 
 void Processor::setPreviewing(bool on) {
@@ -244,31 +265,39 @@ void Processor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&
     engine.setSound(currentPresetIndex());
     engine.setMacros(currentMacros());
 
+    // MIDI in: holding a note plays the loop in that note's key
+    bool retrigger = false;
     for (const auto meta : midi) {
         const auto m = meta.getMessage();
-        if (m.isNoteOn()) engine.synthRef().noteOn(m.getNoteNumber(), m.getFloatVelocity(), false);
-        else if (m.isNoteOff()) engine.synthRef().noteOff(m.getNoteNumber());
-        else if (m.isAllNotesOff() || m.isAllSoundOff()) engine.synthRef().allNotesOff();
+        if (m.isNoteOn()) { midiHeld = m.getNoteNumber(); transposeUi = nearestShift(audioPattern.key, midiHeld); retrigger = true; }
+        else if (m.isNoteOff() && m.getNoteNumber() == midiHeld) midiHeld = -1;
+        else if (m.isAllNotesOff() || m.isAllSoundOff()) midiHeld = -1;
     }
+    engine.setTranspose(transposeUi.load());
 
+    const bool sync = fParam(state, id::syncBpm) > 0.5f;
     double bpm = currentBpm(), ppq = internalPpq;
     bool hostRunning = false;
     if (auto* ph = getPlayHead()) {
         if (auto pos = ph->getPosition()) {
             hostRunning = pos->getIsPlaying();
-            if (hostRunning) {
+            if (sync) {
                 if (auto b = pos->getBpm()) bpm = *b;
-                if (auto q = pos->getPpqPosition()) ppq = *q;
+                if (hostRunning) if (auto q = pos->getPpqPosition()) ppq = *q;
             }
         }
     }
     hostPlaying = hostRunning;
+    const bool useHostClock = sync && hostRunning;
 
-    const bool play = previewing.load();
-    if (play && restartPreview.exchange(false)) {
+    const bool midiPlay = midiHeld >= 0;
+    const bool play = previewing.load() || midiPlay;
+    if (play && (restartPreview.exchange(false) || retrigger)) {
         internalPpq = 0.0;
-        if (!hostRunning) ppq = 0.0;
+        if (!useHostClock) ppq = 0.0;
         engine.synthRef().allNotesOff();
+        engine.reset();
+        engine.setTranspose(transposeUi.load());
     }
     if (!play && wasPlayingPattern) engine.synthRef().allNotesOff();
     wasPlayingPattern = play;
@@ -284,7 +313,7 @@ void Processor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&
     } else {
         engine.render(l, r, n, ppq, bpm, audioPattern, play, currentFx());
     }
-    if (!hostRunning) internalPpq = ppq + n * bpm / 60.0 / getSampleRate();
+    if (!useHostClock) internalPpq = ppq + n * bpm / 60.0 / liveRate;
     else internalPpq = ppq;
 }
 
@@ -292,8 +321,7 @@ void Processor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&
 // Export
 // ===========================================================================
 juce::String Processor::exportName() const {
-    const auto g = currentGenSettings();
-    juce::String s = juce::String("Bass Code - ") + style(g.style).name + " " + noteName(pattern.key) + " "
+    juce::String s = juce::String("Bass Code - ") + genreOf(state).name + " " + noteName(pattern.key) + " "
                      + juce::String(scales()[(size_t) pattern.scale].name).toLowerCase() + " " + juce::String(currentBpm()) + "bpm";
     return juce::File::createLegalFileName(s);
 }

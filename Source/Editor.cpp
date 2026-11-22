@@ -48,7 +48,7 @@ static void card(juce::Graphics& g, juce::Rectangle<float> r, juce::Colour fill 
 }
 
 static juce::String styleDisplay(int s) {
-    return s == electronic ? T("ELETRÔNICA") : juce::String(style(s).name);
+    return T(genres()[(size_t) juce::jlimit(0, (int) genres().size() - 1, s)].displayName);
 }
 static juce::String scaleDisplay(int i) {
     static const char* n[] { "MENOR", "MAIOR", "FRÍGIO", "DÓRICO", "MENOR HARMÔNICA" };
@@ -298,6 +298,58 @@ private:
     bool dragging = false;
 };
 
+// ◀ value ▾ ▶ : arrows step, clicking the value opens a menu.
+class ArrowSelector final : public juce::Component {
+public:
+    std::function<juce::String()> text;
+    std::function<void(int)> step;
+    std::function<void(ArrowSelector&)> openMenu;
+
+    void paint(juce::Graphics& g) override {
+        auto r = getLocalBounds().toFloat().reduced(0.5f);
+        g.setColour(col::panel2);
+        g.fillRoundedRectangle(r, 10.0f);
+        g.setColour(hover >= 0 ? col::limeA.withAlpha(0.5f) : col::line);
+        g.drawRoundedRectangle(r, 10.0f, 1.0f);
+        const float aw = 34.0f;
+        for (int side = 0; side < 2; ++side) {
+            auto a = side == 0 ? r.withWidth(aw) : r.withLeft(r.getRight() - aw);
+            if (hover == side) { g.setColour(col::limeA.withAlpha(0.12f)); g.fillRoundedRectangle(a.reduced(3.0f), 7.0f); }
+            juce::Path tri;
+            const auto c = a.getCentre();
+            if (side == 0) tri.addTriangle(c.x + 4.0f, c.y - 6.0f, c.x + 4.0f, c.y + 6.0f, c.x - 5.0f, c.y);
+            else tri.addTriangle(c.x - 4.0f, c.y - 6.0f, c.x - 4.0f, c.y + 6.0f, c.x + 5.0f, c.y);
+            g.setColour(hover == side ? col::limeA : col::soft);
+            g.fillPath(tri);
+        }
+        g.setColour(col::line);
+        g.fillRect(r.getX() + aw, r.getY() + 9.0f, 1.0f, r.getHeight() - 18.0f);
+        g.fillRect(r.getRight() - aw, r.getY() + 9.0f, 1.0f, r.getHeight() - 18.0f);
+        auto mid = r.reduced(aw + 10.0f, 0.0f);
+        g.setColour(hover == 2 ? col::limeA : col::text);
+        g.setFont(interBold(13.0f).withExtraKerningFactor(0.06f));
+        g.drawFittedText(text ? text() : juce::String(), mid.withTrimmedRight(14.0f).toNearestInt(), juce::Justification::centred, 1, 0.75f);
+        juce::Path caret;
+        const float cx = mid.getRight() - 4.0f, cy = mid.getCentreY();
+        caret.addTriangle(cx - 4.0f, cy - 2.0f, cx + 4.0f, cy - 2.0f, cx, cy + 3.0f);
+        g.setColour(col::dim);
+        g.fillPath(caret);
+    }
+    void mouseDown(const juce::MouseEvent& e) override {
+        const int z = zone(e.position.x);
+        if (z == 0 && step) step(-1);
+        else if (z == 1 && step) step(1);
+        else if (openMenu) openMenu(*this);
+        repaint();
+    }
+    void mouseMove(const juce::MouseEvent& e) override { const int z = zone(e.position.x); if (z != hover) { hover = z; repaint(); } }
+    void mouseExit(const juce::MouseEvent&) override { hover = -1; repaint(); }
+
+private:
+    int zone(float x) const { return x < 34.0f ? 0 : x > (float) getWidth() - 34.0f ? 1 : 2; }
+    int hover = -1;
+};
+
 // ===========================================================================
 // Piano roll
 // ===========================================================================
@@ -313,7 +365,8 @@ public:
     }
 
     void setPlayhead(double steps) {
-        if (std::abs(steps - playhead) > 0.01) { playhead = steps; repaint(); }
+        const int t = proc.isPreviewing() ? proc.getTranspose() : 99;
+        if (std::abs(steps - playhead) > 0.01 || t != shownTranspose) { playhead = steps; shownTranspose = t; repaint(); }
     }
 
     void paint(juce::Graphics& g) override {
@@ -338,6 +391,10 @@ public:
             g.setColour(juce::Colour(0xffd9dce8));
             g.fillRect(key);
             if (black) { g.setColour(juce::Colour(0xff11131d)); g.fillRect(key.withWidth(28.0f).reduced(0.0f, 1.0f)); }
+            if (proc.isPreviewing() && ((pitch - pat.key - proc.getTranspose()) % 12 + 12) % 12 == 0) {
+                g.setGradientFill(lime(key));
+                g.fillRect(black ? key.withWidth(28.0f).reduced(0.0f, 1.0f) : key);
+            }
             else if ((pitch % 12) == 4 || (pitch % 12) == 11) { g.setColour(juce::Colour(0xff9aa0b8)); g.fillRect(key.getX(), y, key.getWidth(), 1.0f); }
             if (pitch % 12 == 0) {
                 g.setColour(juce::Colour(0xff4a4f68));
@@ -418,6 +475,13 @@ public:
     void mouseDown(const juce::MouseEvent& e) override {
         grabKeyboardFocus();
         const auto pos = e.position;
+        const auto grid = gridArea();
+        if (pos.x < grid.getX() - 4.0f && pos.x >= 8.0f && pos.y >= grid.getY() && pos.y < grid.getBottom()) {
+            proc.playInKey(pitchAt(pos.y));   // the loop plays in the clicked key
+            mode = none;
+            repaint();
+            return;
+        }
         const int hit = noteAt(pos);
         mode = none;
         if (hit >= 0) {
@@ -565,6 +629,7 @@ private:
     Note dragOrig;
     int dragStartStep = 0, dragStartPitch = 0;
     double playhead = -1.0;
+    int shownTranspose = 99;
 };
 
 // ===========================================================================
@@ -575,29 +640,64 @@ public:
     explicit Root(Processor& p) : proc(p), roll(p),
         playBtn(Btn::play), varBtn(Btn::variation), genBtn(Btn::generate), midiBtn(Btn::dragMidi), wavBtn(Btn::dragWav) {
         auto& st = proc.state;
+        const int nG = (int) genres().size();
 
-        styles.big = true;
-        for (int s = 0; s < numStyles; ++s) styles.items.add(styleDisplay(s));
-        styles.get = [this] { return ip("style"); };
-        styles.set = [this](int i) {
-            setParam("style", (float) i);
-            proc.applyStyleDefaults();
-            proc.regenerateKeepSeed();
-            refreshCombos();
-            roll.refreshFromProcessor();
-            repaint();
+        // STYLE
+        styleSel.text = [this] { return styleDisplay(ip("style")); };
+        styleSel.step = [this, nG](int d) { setStyle((ip("style") + d + nG) % nG); };
+        styleSel.openMenu = [this, nG](ArrowSelector& c) {
+            juce::PopupMenu m;
+            for (int i = 0; i < nG; ++i) m.addItem(i + 1, styleDisplay(i), true, i == ip("style"));
+            show(m, c, [this](int r) { if (r > 0) setStyle(r - 1); });
         };
-        addAndMakeVisible(styles);
+        // ARRANJO (0 = PADRÃO)
+        arrSel.text = [this] {
+            const auto& g = genre();
+            if (ip("arrange") == 0) return T("PADRÃO  ·  ") + g.arrangements[(size_t) proc.currentArrangement()].name;
+            return juce::String(g.arrangements[(size_t) (ip("arrange") - 1)].name);
+        };
+        arrSel.step = [this](int d) { const int n = (int) genre().arrangements.size() + 1; setArrange((ip("arrange") + d + n) % n); };
+        arrSel.openMenu = [this](ArrowSelector& c) {
+            juce::PopupMenu m;
+            m.addItem(1, T("PADRÃO (sorteia a cada GERAR)"), true, ip("arrange") == 0);
+            m.addSeparator();
+            const auto& g = genre();
+            for (int i = 0; i < (int) g.arrangements.size(); ++i) m.addItem(i + 2, g.arrangements[(size_t) i].name, true, ip("arrange") == i + 1);
+            show(m, c, [this](int r) { if (r > 0) setArrange(r - 1); });
+        };
+        // SOUND: genre submenus, arrows walk the whole list
+        soundSel.text = [this] { return juce::String(sounds()[(size_t) ip("sound")].preset.name); };
+        soundSel.step = [this](int d) { const int n = (int) sounds().size(); setSound((ip("sound") + d + n) % n); };
+        soundSel.openMenu = [this, nG](ArrowSelector& c) {
+            juce::PopupMenu m;
+            const auto& all = sounds();
+            const int cur = ip("sound");
+            for (int gi = 0; gi < nG; ++gi) {
+                juce::PopupMenu sub;
+                bool has = false;
+                for (int i = 0; i < (int) all.size(); ++i)
+                    if (all[(size_t) i].genre == gi) { sub.addItem(i + 1, all[(size_t) i].preset.name, true, i == cur); has = has || i == cur; }
+                m.addSubMenu(styleDisplay(gi), sub, true, nullptr, has);
+            }
+            show(m, c, [this](int r) { if (r > 0) setSound(r - 1); });
+        };
+        // AUTOMAÇÃO
+        autoSel.text = [this] { return T(automationName(ip("automation"))); };
+        autoSel.step = [this](int d) { setParam("automation", (float) ((ip("automation") + d + numAutomations) % numAutomations)); repaint(); };
+        autoSel.openMenu = [this](ArrowSelector& c) {
+            juce::PopupMenu m;
+            for (int a = 0; a < numAutomations; ++a) m.addItem(a + 1, T(automationName(a)), true, a == ip("automation"));
+            show(m, c, [this](int r) { if (r > 0) { setParam("automation", (float) (r - 1)); repaint(); } });
+        };
+        for (auto* a : { &styleSel, &arrSel, &soundSel, &autoSel }) { a->setMouseCursor(juce::MouseCursor::PointingHandCursor); addAndMakeVisible(*a); }
 
-        for (auto* c : { &keyBox, &scaleBox, &grooveBox, &soundBox }) addAndMakeVisible(*c);
+        for (auto* c : { &keyBox, &scaleBox }) addAndMakeVisible(*c);
         keyBox.addItem(T("PADRÃO"), 1);
         for (int k = 0; k < 12; ++k) keyBox.addItem(noteName(k), k + 2);
         scaleBox.addItem(T("PADRÃO"), 1);
         for (int i = 0; i < (int) scales().size(); ++i) scaleBox.addItem(scaleDisplay(i), i + 2);
         keyBox.onChange = [this] { setParam("key", (float) (keyBox.getSelectedId() - 1)); regen(); };
         scaleBox.onChange = [this] { setParam("scale", (float) (scaleBox.getSelectedId() - 1)); regen(); };
-        grooveBox.onChange = [this] { setParam("groove", (float) (grooveBox.getSelectedId() - 1)); regen(); };
-        soundBox.onChange = [this] { setParam("sound", (float) (soundBox.getSelectedId() - 1)); repaint(); };
         refreshCombos();
 
         addAndMakeVisible(roll);
@@ -613,24 +713,15 @@ public:
             knobAtt[(size_t) i] = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(st, knobIds[i], k);
         }
 
-        const char* fxIds[] { "lp", "rev", "dly", "sc" };
-        const char* fxOn[] { "lpOn", "revOn", "dlyOn", "scOn" };
+        const char* fxIds[] { "sc", "rev", "dly", "autoAmt" };
         for (int i = 0; i < 4; ++i) {
             auto& s = fxSliders[(size_t) i];
             s.setSliderStyle(juce::Slider::LinearHorizontal);
             s.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
             addAndMakeVisible(s);
             fxAtt[(size_t) i] = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(st, fxIds[i], s);
-            addAndMakeVisible(fxToggles[(size_t) i]);
-            fxTogAtt[(size_t) i] = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(st, fxOn[i], fxToggles[(size_t) i]);
-            fxToggles[(size_t) i].onStateChange = [this] { updateEnabled(); };
+            s.onValueChange = [this] { repaint(); };
         }
-        sweepBtn.setClickingTogglesState(true);
-        sweepBtn.setButtonText("SWEEP");
-        sweepBtn.setMouseCursor(juce::MouseCursor::PointingHandCursor);
-        addAndMakeVisible(sweepBtn);
-        sweepAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(st, "sweep", sweepBtn);
-        sweepBtn.onStateChange = [this] { repaint(); };
 
         bars.items = { "2", "4", "8" };
         bars.get = [this] { return ip("bars"); };
@@ -645,6 +736,17 @@ public:
         addAndMakeVisible(bpm);
         bpmAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(st, "bpm", bpm);
         bpm.onValueChange = [this] { repaint(); };
+
+        gear.setMouseCursor(juce::MouseCursor::PointingHandCursor);
+        gear.onClick = [this] {
+            juce::PopupMenu m;
+            m.addSectionHeader(T("CONFIGURAÇÕES"));
+            m.addItem(1, T("Sincronizar BPM com o projeto"), true, ip("syncBpm") == 1);
+            m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&gear), [this](int r) {
+                if (r == 1) { setParam("syncBpm", ip("syncBpm") == 1 ? 0.0f : 1.0f); updateEnabled(); }
+            });
+        };
+        addAndMakeVisible(gear);
 
         for (auto* b : { &playBtn, &varBtn, &genBtn, &midiBtn, &wavBtn }) addAndMakeVisible(*b);
         playBtn.onClick = [this] { proc.setPreviewing(!proc.isPreviewing()); playBtn.active = proc.isPreviewing(); playBtn.repaint(); };
@@ -685,11 +787,11 @@ public:
         g.setColour(col::limeA);
         g.drawText("CODE", juce::Rectangle<float>(80.0f + juce::GlyphArrangement::getStringWidth(spaceBold(26.0f).withExtraKerningFactor(0.02f), "BASS "), 20.0f, 100.0f, 42.0f), juce::Justification::centredLeft, false);
 
-        // status pill
+        // status pill (left of the gear)
         const auto pill = pillText();
         auto pf = interBold(11.5f).withExtraKerningFactor(0.12f);
         const float pw = juce::GlyphArrangement::getStringWidth(pf, pill) + 40.0f;
-        auto pr = juce::Rectangle<float>((float) getWidth() - 24.0f - pw, 23.0f, pw, 36.0f);
+        auto pr = juce::Rectangle<float>((float) gear.getX() - 12.0f - pw, 23.0f, pw, 36.0f);
         g.setColour(col::limeA.withAlpha(0.65f));
         g.drawRoundedRectangle(pr, 18.0f, 1.0f);
         g.setColour(col::limeA);
@@ -698,14 +800,17 @@ public:
         g.setColour(col::line);
         g.fillRect(24.0f, 78.0f, (float) getWidth() - 48.0f, 1.0f);
 
-        label(g, "STYLE", 24.0f, 90.0f);
-        const float colW = ((float) getWidth() - 48.0f - 36.0f) / 4.0f;
-        const char* dl[] { "TOM", "ESCALA", "GROOVE", "SOUND" };
-        for (int i = 0; i < 4; ++i) label(g, dl[i], 24.0f + (float) i * (colW + 12.0f), 162.0f);
+        const float colW = ((float) getWidth() - 48.0f - 24.0f) / 3.0f;
+        const char* top[] { "STYLE", "ARRANJO", "SOUND" };
+        const char* bot[] { "TOM", "ESCALA", "AUTOMAÇÃO" };
+        for (int i = 0; i < 3; ++i) {
+            label(g, top[i], 24.0f + (float) i * (colW + 12.0f), 90.0f);
+            label(g, T(bot[i]), 24.0f + (float) i * (colW + 12.0f), 162.0f);
+        }
 
         g.setColour(col::dim);
         g.setFont(interRegular(12.0f));
-        g.drawText(T("Clique numa nota e use ↑↓ (Shift = oitava) ou arraste pra mudar a nota do bass  ·  clique no grid cria nota  ·  puxe a ponta pra alongar  ·  duplo clique apaga  ·  KICK é só guia do ducking"),
+        g.drawText(T("Clique numa tecla do piano pra tocar o loop naquele tom (ou toque uma nota no teclado MIDI)  ·  clique numa nota e use ↑↓ ou arraste  ·  duplo clique apaga"),
                    juce::Rectangle<float>(24.0f, 558.0f, (float) getWidth() - 48.0f, 18.0f), juce::Justification::centredLeft, true);
 
         // SOM card
@@ -726,22 +831,21 @@ public:
         // FX card
         card(g, fxCard);
         label(g, T("FX  ·  VÃO JUNTO NO WAV"), fxCard.getX() + 18.0f, fxCard.getY() + 14.0f);
-        const char* fn[] { "LOWPASS", "REVERB", "DELAY", "SIDECHAIN" };
+        const char* fn[] { "SIDECHAIN", "REVERB", "DELAY", "AUTOMAÇÃO" };
         for (int i = 0; i < 4; ++i) {
             auto s = fxSliders[(size_t) i].getBounds().toFloat();
-            g.setColour(fxToggles[(size_t) i].getToggleState() ? col::text : col::dim);
+            g.setColour(col::text);
             g.setFont(interBold(12.0f).withExtraKerningFactor(0.1f));
-            g.drawText(fn[i], juce::Rectangle<float>(fxCard.getX() + 18.0f, s.getY(), 90.0f, s.getHeight()), juce::Justification::centredLeft, false);
-            if (i == 0) continue;
-            juce::String v = i == 2 ? "1/8 D" : juce::String((int) std::lround(fxSliders[(size_t) i].getValue() * 100.0)) + "%";
+            g.drawText(T(fn[i]), juce::Rectangle<float>(fxCard.getX() + 18.0f, s.getY(), 100.0f, s.getHeight()), juce::Justification::centredLeft, false);
+            juce::String v = juce::String((int) std::lround(fxSliders[(size_t) i].getValue() * 100.0)) + "%";
             g.setColour(juce::Colour(0xffd6f7b0));
             g.setFont(interBold(11.5f));
-            g.drawText(v, juce::Rectangle<float>(fxCard.getRight() - 128.0f, s.getY(), 68.0f, s.getHeight()), juce::Justification::centredRight, false);
+            g.drawText(v, juce::Rectangle<float>(fxCard.getRight() - 72.0f, s.getY(), 54.0f, s.getHeight()), juce::Justification::centredRight, false);
         }
         g.setColour(col::dim);
         g.setFont(interRegular(10.5f));
-        g.drawText(T("SWEEP = o lowpass abre ao longo do loop, pronto pra build ou drop"),
-                   juce::Rectangle<float>(fxCard.getX() + 18.0f, fxCard.getBottom() - 26.0f, fxCard.getWidth() - 30.0f, 14.0f), juce::Justification::centredLeft, false);
+        g.drawText(T("Sidechain fixo em todo tempo  ·  automação roda no fim do loop"),
+                   juce::Rectangle<float>(fxCard.getX() + 18.0f, fxCard.getBottom() - 24.0f, fxCard.getWidth() - 30.0f, 14.0f), juce::Justification::centredLeft, false);
 
         // side cards
         for (int i = 0; i < 3; ++i) card(g, sideCards[(size_t) i]);
@@ -750,24 +854,41 @@ public:
         label(g, "BPM", sideCards[2].getX() + 14.0f, sideCards[2].getY() + 9.0f);
         g.setColour(juce::Colour(0xffd6f7b0));
         g.setFont(interBold(11.5f));
-        g.drawText(juce::String((int) bpm.getValue()), sideCards[2].withTrimmedRight(14.0f).withHeight(32.0f), juce::Justification::centredRight, false);
+        const bool sync = ip("syncBpm") == 1;
+        g.drawText(sync ? T("PROJETO") : juce::String((int) bpm.getValue()), sideCards[2].withTrimmedRight(14.0f).withHeight(32.0f), juce::Justification::centredRight, false);
     }
 
     void paintOverChildren(juce::Graphics& g) override {
-        // SWEEP chip label next to the lowpass slider
-        auto b = sweepBtn.getBounds().toFloat();
-        const bool on = sweepBtn.getToggleState();
-        g.setColour(on ? col::limeA : col::dim);
-        g.setFont(interBold(11.5f).withExtraKerningFactor(0.08f));
-        g.drawText(on ? T("SWEEP ↗") : T("FIXO"), b, juce::Justification::centredRight, false);
+        // gear icon
+        auto b = gear.getBounds().toFloat().reduced(9.0f);
+        const auto c = b.getCentre();
+        const float ro = b.getWidth() * 0.5f, ri = ro * 0.62f;
+        juce::Path p;
+        for (int i = 0; i < 16; ++i) {
+            const float a = juce::MathConstants<float>::twoPi * (float) i / 16.0f;
+            const float rr = (i / 2) % 2 == 0 ? ro : ri + 2.5f;
+            const auto pt = juce::Point<float>(c.x + rr * std::sin(a), c.y - rr * std::cos(a));
+            if (i == 0) p.startNewSubPath(pt); else p.lineTo(pt);
+        }
+        p.closeSubPath();
+        g.setColour(gear.isOver() ? col::limeA : col::soft);
+        g.fillPath(p);
+        g.setColour(col::bg);
+        g.fillEllipse(juce::Rectangle<float>(ri * 0.9f, ri * 0.9f).withCentre(c));
+        g.setColour(col::line);
+        g.drawRoundedRectangle(gear.getBounds().toFloat().reduced(0.5f), 18.0f, 1.0f);
     }
 
     void resized() override {
         const int W = getWidth();
-        styles.setBounds(24, 106, W - 48, 42);
-        const int colW = (W - 48 - 36) / 4;
-        juce::ComboBox* boxes[] { &keyBox, &scaleBox, &grooveBox, &soundBox };
-        for (int i = 0; i < 4; ++i) boxes[i]->setBounds(24 + i * (colW + 12), 178, colW, 42);
+        gear.setBounds(W - 24 - 36, 23, 36, 36);
+        const int colW = (W - 48 - 24) / 3;
+        ArrowSelector* topRow[] { &styleSel, &arrSel, &soundSel };
+        juce::Component* botRow[] { &keyBox, &scaleBox, &autoSel };
+        for (int i = 0; i < 3; ++i) {
+            topRow[i]->setBounds(24 + i * (colW + 12), 106, colW, 42);
+            botRow[i]->setBounds(24 + i * (colW + 12), 178, colW, 42);
+        }
         roll.setBounds(24, 234, W - 48, 318);
 
         const float midY = 586.0f, midH = 176.0f;
@@ -781,17 +902,13 @@ public:
             const float cx = somCard.getX() + 30.0f + (somCard.getWidth() - 60.0f) * ((float) i + 0.5f) / 4.0f;
             knobs[(size_t) i].setBounds(juce::Rectangle<int>(84, 84).withCentre({ (int) cx, (int) midY + 82 }));
         }
-        for (int i = 0; i < 4; ++i) {
-            const int y = (int) midY + 40 + i * 30;
-            fxSliders[(size_t) i].setBounds((int) fxCard.getX() + 112, y, 168, 24);
-            fxToggles[(size_t) i].setBounds((int) fxCard.getRight() - 54, y, 40, 24);
-        }
-        sweepBtn.setBounds((int) fxCard.getRight() - 128, (int) midY + 40, 68, 24);
+        for (int i = 0; i < 4; ++i)
+            fxSliders[(size_t) i].setBounds((int) fxCard.getX() + 122, (int) midY + 40 + i * 28, 196, 24);
         for (int i = 0; i < 2; ++i) {
             auto c = sideCards[(size_t) i];
             (i == 0 ? bars : density).setBounds((int) c.getX() + 92, (int) c.getY() + 8, (int) c.getWidth() - 104, (int) c.getHeight() - 16);
         }
-        bpm.setBounds((int) sideCards[2].getX() + 92, (int) sideCards[2].getY() + 8, (int) sideCards[2].getWidth() - 150, (int) sideCards[2].getHeight() - 16);
+        bpm.setBounds((int) sideCards[2].getX() + 92, (int) sideCards[2].getY() + 8, (int) sideCards[2].getWidth() - 166, (int) sideCards[2].getHeight() - 16);
 
         const int by = 776, bh = 56, gap = 10;
         const int unit = (W - 48 - gap * 4) * 10 / 61;   // 4 x 1.0 + 2.1
@@ -808,38 +925,53 @@ private:
     void timerCallback() override {
         roll.setPlayhead(proc.getPlayPositionSteps());
         if (playBtn.active != proc.isPreviewing()) { playBtn.active = proc.isPreviewing(); playBtn.repaint(); }
+        const int t = proc.isPreviewing() ? proc.getTranspose() : 0;
+        if (t != shownT) { shownT = t; repaint(); }
     }
 
+    const Genre& genre() const { return genres()[(size_t) juce::jlimit(0, (int) genres().size() - 1, ip("style"))]; }
     int ip(const char* pid) const { return (int) std::lround(proc.state.getRawParameterValue(pid)->load()); }
     void setParam(const char* pid, float plain) {
         if (auto* p = proc.state.getParameter(pid)) p->setValueNotifyingHost(p->convertTo0to1(plain));
     }
     void regen() { proc.regenerateKeepSeed(); roll.refreshFromProcessor(); repaint(); }
+    void setStyle(int i) {
+        setParam("style", (float) i);
+        proc.applyStyleDefaults();
+        proc.generate(false);
+        refreshCombos();
+        roll.refreshFromProcessor();
+        repaint();
+    }
+    void setArrange(int a) {
+        setParam("arrange", (float) a);
+        proc.generate(false);
+        roll.refreshFromProcessor();
+        repaint();
+    }
+    void setSound(int i) { setParam("sound", (float) i); repaint(); }
+    void show(juce::PopupMenu& m, juce::Component& c, std::function<void(int)> done) {
+        m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&c).withMinimumWidth(c.getWidth()), std::move(done));
+    }
 
     void refreshCombos() {
-        const auto& sd = style(ip("style"));
         keyBox.setSelectedId(ip("key") + 1, juce::dontSendNotification);
         scaleBox.setSelectedId(ip("scale") + 1, juce::dontSendNotification);
-        grooveBox.clear(juce::dontSendNotification);
-        for (int i = 0; i < 3; ++i) grooveBox.addItem(sd.grooves[(size_t) i], i + 1);
-        grooveBox.setSelectedId(ip("groove") + 1, juce::dontSendNotification);
-        soundBox.clear(juce::dontSendNotification);
-        for (int i = 0; i < (int) sd.sounds.size(); ++i) soundBox.addItem(presets()[(size_t) sd.sounds[(size_t) i]].name, i + 1);
-        soundBox.setSelectedId(ip("sound") + 1, juce::dontSendNotification);
     }
 
     void updateEnabled() {
-        for (int i = 0; i < 4; ++i) fxSliders[(size_t) i].setEnabled(fxToggles[(size_t) i].getToggleState());
-        sweepBtn.setEnabled(fxToggles[0].getToggleState());
+        bpm.setEnabled(ip("syncBpm") == 0);
         repaint();
     }
 
     juce::String pillText() const {
         const auto& pat = proc.getPattern();
-        juce::String key = ip("key") == 0 ? T("PADRÃO → ") + noteName(pat.key) : juce::String(noteName(pat.key));
+        const int t = proc.isPreviewing() ? proc.getTranspose() : 0;
+        const int shownKey = ((pat.key + t) % 12 + 12) % 12;
+        juce::String key = ip("key") == 0 && t == 0 ? T("PADRÃO → ") + noteName(shownKey) : juce::String(noteName(shownKey));
         return styleDisplay(ip("style")) + T("  ·  ") + key + " " + scaleDisplay(pat.scale) + T("  ·  ")
-               + style(ip("style")).grooves[(size_t) juce::jlimit(0, 2, ip("groove"))] + T("  ·  ")
-               + juce::String(pat.bars) + " BARS" + T("  ·  ") + juce::String(proc.currentBpm()) + " BPM";
+               + genre().arrangements[(size_t) proc.currentArrangement()].name + T("  ·  ")
+               + juce::String(pat.bars) + " BARS" + T("  ·  ") + (ip("syncBpm") == 1 ? T("BPM DO PROJETO") : juce::String(proc.currentBpm()) + " BPM");
     }
 
     void dragFile(const juce::File& f) {
@@ -859,21 +991,20 @@ private:
     }
 
     Processor& proc;
-    Segments styles, bars, density;
-    juce::ComboBox keyBox, scaleBox, grooveBox, soundBox;
+    ArrowSelector styleSel, arrSel, soundSel, autoSel;
+    Segments bars, density;
+    juce::ComboBox keyBox, scaleBox;
     PianoRoll roll;
     std::array<juce::Slider, 4> knobs, fxSliders;
-    std::array<juce::ToggleButton, 4> fxToggles;
-    juce::TextButton sweepBtn;
     juce::Slider bpm;
+    juce::TextButton gear;
     std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>, 4> knobAtt, fxAtt;
-    std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>, 4> fxTogAtt;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> sweepAtt;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> bpmAtt;
     Btn playBtn, varBtn, genBtn, midiBtn, wavBtn;
     juce::Rectangle<float> somCard, fxCard;
     std::array<juce::Rectangle<float>, 3> sideCards;
     std::unique_ptr<juce::FileChooser> chooser;
+    int shownT = 0;
 };
 
 

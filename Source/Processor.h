@@ -3,6 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <atomic>
 
+#include "Core/Genres.h"
 #include "Core/Music.h"
 #include "Dsp/Fx.h"
 #include "Dsp/Synth.h"
@@ -20,6 +21,8 @@ public:
     void render(float* left, float* right, int n, double ppq, double bpm, const Pattern& pattern,
                 bool playPattern, const FxSettings& fx);
     BassSynth& synthRef() { return synth; }
+    // plays the pattern shifted by t semitones (piano key click / MIDI trigger)
+    void setTranspose(int t) { if (t != transpose) { synth.allNotesOff(); sounding = -1; transpose = t; } }
 
 private:
     void schedule(const Pattern&, double from, double to);
@@ -27,6 +30,7 @@ private:
     FxChain fx;
     std::vector<float> mono;
     int sounding = -1;
+    int transpose = 0;
     double sr = 48000.0;
 };
 
@@ -65,6 +69,10 @@ public:
     void applyStyleDefaults();                          // after STYLE change
     GenSettings currentGenSettings() const;
     int currentPresetIndex() const;
+    int currentArrangement() const;    // resolved arrangement index of the current genre
+    // piano roll key click: loop plays in the key of `pitch` (nearest shift). Returns the shift.
+    int playInKey(int pitch);
+    int getTranspose() const { return transposeUi.load(); }
     int currentBpm() const;
     FxSettings currentFx() const;
     Macros currentMacros() const;
@@ -92,10 +100,13 @@ private:
     Pattern pendingPattern;
     std::atomic<bool> patternDirty { false };
     uint32_t seed = 7;
+    int lastArrangement = 0;
+    std::atomic<int> transposeUi { 0 };
+    int midiHeld = -1;
 
     std::atomic<bool> previewing { false }, restartPreview { false }, hostPlaying { false };
     std::atomic<double> playSteps { -1.0 };
-    double internalPpq = 0.0;
+    double internalPpq = 0.0, liveRate = 48000.0;
     bool wasPlayingPattern = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(Processor)

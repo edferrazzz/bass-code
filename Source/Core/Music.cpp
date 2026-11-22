@@ -63,6 +63,20 @@ const std::vector<std::array<int, 4>>& progressions(int s) {
 // One bar of rhythm for a style + groove.
 std::vector<Hit> grooveBar(int s, int groove, int bar, Rng& rng) {
     std::vector<Hit> h;
+    // shared grooves (10+) usable by any genre
+    if (groove >= 10) {
+        switch (groove) {
+            case 10: for (int b = 0; b < 4; ++b) { h.push_back({ b * 4 + 1, 1, root, 0.8f }); h.push_back({ b * 4 + 2, 1, root, 0.95f }); h.push_back({ b * 4 + 3, 1, b % 2 ? octave : root, 0.82f }); } break;
+            case 11: h = { { 3, 1, root, 0.9f }, { 6, 1, root, 0.8f }, { 9, 1, octave, 0.75f }, { 11, 1, root, 0.92f }, { 14, 1, fifth, 0.8f } }; break;
+            case 12: for (int b = 0; b < 4; ++b) { h.push_back({ b * 4 + 2, 1, root, 0.95f }); if (b % 2) h.push_back({ b * 4 + 3, 1, octave, 0.7f }); } break;
+            case 13: h = { { 2, 6, root, 0.9f }, { 10, 4, root, 0.85f }, { 14, 2, approach, 0.8f } }; break;
+            case 14: h = { { 0, 3, root, 0.95f }, { 6, 2, octave, 0.85f, true }, { 10, 4, root, 0.9f, true }, { 14, 2, fifth, 0.8f } }; break;
+            case 15: for (int b = 0; b < 4; ++b) { h.push_back({ b * 4 + 1, 1, root, 0.85f }); h.push_back({ b * 4 + 3, 1, root, 0.95f }); } break;
+            default: h = { { 3, 2, root, 0.9f }, { 6, 2, root, 0.85f }, { 10, 2, octave, 0.9f }, { 13, 2, root, 0.85f } }; break;
+        }
+        (void) bar; (void) rng;
+        return h;
+    }
     switch (s) {
     case psy:
         for (int b = 0; b < 4; ++b) {
