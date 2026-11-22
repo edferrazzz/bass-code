@@ -16,7 +16,7 @@ void FxChain::prepare(double sampleRate, int maxBlock) {
 }
 
 void FxChain::reset() {
-    lpS1 = lpS2 = lpS3 = lpS4 = 0.0f;
+    lpL = {}; lpR = {};
     std::fill(dlL.begin(), dlL.end(), 0.0f);
     std::fill(dlR.begin(), dlR.end(), 0.0f);
     dlPos = 0;
@@ -25,7 +25,7 @@ void FxChain::reset() {
     hpPrevIn = hpPrevOut = 0.0f;
 }
 
-void FxChain::process(const float* mono, float* left, float* right, int n, const FxSettings& fx,
+void FxChain::process(float* left, float* right, int n, const FxSettings& fx,
                       double bpm, double ppqStart, double loopBeats) {
     if ((int) wetL.size() < n) { wetL.resize((size_t) n); wetR.resize((size_t) n); }
     bpm = bpm > 20.0 ? bpm : 120.0;
@@ -38,7 +38,7 @@ void FxChain::process(const float* mono, float* left, float* right, int n, const
     double ppq = ppqStart;
 
     for (int i = 0; i < n; ++i) {
-        float x = mono[i];
+        float xl = left[i], xr = right[i];
 
         // LOWPASS (+ SWEEP)
         if (fx.lowpassOn) {
@@ -52,29 +52,31 @@ void FxChain::process(const float* mono, float* left, float* right, int n, const
             const float fc = std::clamp(cutoffSmoothed, 30.0f, (float) sr * 0.45f);
             const float g = std::tan(3.14159265f * fc / (float) sr);
             const float G = g / (1.0f + g);
-            float v;
-            v = (x - lpS1) * G; float y1 = v + lpS1; lpS1 = y1 + v;
-            v = (y1 - lpS2) * G; float y2 = v + lpS2; lpS2 = y2 + v;
-            v = (y2 - lpS3) * G; float y3 = v + lpS3; lpS3 = y3 + v;
-            v = (y3 - lpS4) * G; float y4 = v + lpS4; lpS4 = y4 + v;
-            x = y4;
+            auto lp4 = [G](std::array<float, 4>& st, float in) {
+                for (auto& z : st) { const float v = (in - z) * G; const float y = v + z; z = y + v; in = y; }
+                return in;
+            };
+            xl = lp4(lpL, xl);
+            xr = lp4(lpR, xr);
         }
 
         // SIDECHAIN: duck on every beat (where the kick is)
         if (fx.sidechainOn && fx.sidechain > 0.0f) {
             const float ph = (float) std::fmod(std::max(0.0, ppq), 1.0);
             const float shape = ph < 0.015f ? ph / 0.015f : std::exp(-(ph - 0.015f) / 0.14f);
-            const float duck = 1.0f - fx.sidechain * 0.92f * shape;
-            x *= std::clamp(duck, 0.0f, 1.0f);
+            const float duck = std::clamp(1.0f - fx.sidechain * 0.92f * shape, 0.0f, 1.0f);
+            xl *= duck; xr *= duck;
         }
 
-        x *= fx.volume * 1.25f;
+        xl *= fx.volume * 1.25f;
+        xr *= fx.volume * 1.25f;
+        const float x = 0.5f * (xl + xr);
 
         // send for delay/reverb: one-pole highpass so the low end stays mono and clean
         const float hpOut = hpCoef * (hpPrevOut + x - hpPrevIn);
         hpPrevIn = x; hpPrevOut = hpOut;
 
-        float l = x, r = x;
+        float l = xl, r = xr;
 
         // DELAY (dotted 1/8, light ping-pong)
         if (delayMix > 0.0f) {

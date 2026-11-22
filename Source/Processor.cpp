@@ -56,8 +56,8 @@ void Engine::schedule(const Pattern& p, double from, double to) {
 
 void Engine::render(float* left, float* right, int n, double ppq, double bpm, const Pattern& p, bool playPattern,
                     const FxSettings& fxs) {
-    if ((int) mono.size() < n) mono.resize((size_t) n);
-    std::fill(mono.begin(), mono.begin() + n, 0.0f);
+    std::fill(left, left + n, 0.0f);
+    std::fill(right, right + n, 0.0f);
     bpm = bpm > 20.0 ? bpm : 120.0;
     synth.setTempo(bpm);
     const double perSample = bpm / 60.0 / sr;
@@ -68,9 +68,9 @@ void Engine::render(float* left, float* right, int n, double ppq, double bpm, co
         const double t0 = ppq + i * perSample, t1 = t0 + len * perSample;
         synth.setSongPosition(t0);
         if (playPattern) schedule(p, t0, t1);
-        synth.render(mono.data() + i, len);
+        synth.render(left + i, right + i, len);
     }
-    fx.process(mono.data(), left, right, n, fxs, bpm, ppq, p.steps() / 4.0);
+    fx.process(left, right, n, fxs, bpm, ppq, p.steps() / 4.0);
 }
 
 // ===========================================================================

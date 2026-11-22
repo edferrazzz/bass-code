@@ -27,7 +27,20 @@ struct Preset {
     float fm;          // FM amount (wave 3) / harmonic brightness
     float pitchEnv;    // semitones of pitch drop at the start (log drum, slap)
     float pitchDecay;  // s
+    // ---- v2 (wavetable engine); defaults keep the original sounds as they were
+    int tableA = -1;       // AKWF wave index (Waves.inc); -1 = use `wave`
+    int tableB = -1;       // second oscillator wave (-1 = off)
+    float mixB = 0.0f;     // 0..1
+    float semiB = 0.0f;    // osc B pitch offset (semitones)
+    float detuneB = 0.0f;  // osc B detune (cents)
+    float width = 0.0f;    // stereo spread of the unison (low end always mono)
+    float fold = 0.0f;     // wavefolder on the mid/high band, 0..1
+    float crush = 0.0f;    // bit/rate crush on the mid/high band, 0..1
+    float keytrack = 0.0f; // filter follows the note, 0..1
+    float noise = 0.0f;    // noise into the filter, 0..1
+    float lfoToPitch = 0.0f; // LFO vibrato in semitones
 };
+int waveIndex(const char* name);   // AKWF wave by name, -1 if unknown
 const std::vector<Preset>& presets();
 
 struct Macros { float sub = 0.6f, drive = 0.4f, movement = 0.5f, punch = 0.6f; };
@@ -47,12 +60,12 @@ public:
     void allNotesOff();
     void reset();
 
-    // Mono render, added into out.
-    void render(float* out, int numSamples);
+    // Stereo render, added into left/right (below ~150 Hz it is always mono).
+    void render(float* left, float* right, int numSamples);
 
 private:
-    float oscillator(int wave, double& phase, double inc, float fm);
-    float filterStep(float x, float cutoffHz);
+    float oscillator(int wave, int table, double& phase, double inc, float fm);
+    static float filterStep(std::array<float, 4>& st, float x, float g, float k);
 
     double sr = 48000.0, tempo = 120.0, lfoPpq = 0.0;
     Preset pre {};
@@ -63,7 +76,7 @@ private:
     std::vector<int> stack;      // held keys (legato)
     float vel = 0.0f;
     double freq = 55.0, targetFreq = 55.0;
-    std::array<double, 3> phase {};
+    std::array<double, 3> phase {}, phaseB {};
     double subPhase = 0.0, fmPhase = 0.0;
     bool gate = false;
     float amp = 0.0f, ampTarget = 0.0f;
@@ -71,8 +84,9 @@ private:
     float fEnv = 0.0f, pEnv = 0.0f;
     float click = 0.0f;
     float glideCoef = 1.0f;
-    std::array<float, 4> s {};   // filter state
-    float dcX = 0.0f, dcY = 0.0f;
+    std::array<float, 4> s {}, sSide {};   // filter state (mid, side)
+    float dcX = 0.0f, dcY = 0.0f, splitLp1 = 0.0f, splitLp2 = 0.0f, sideHp = 0.0f, sideHpIn = 0.0f;
+    float crushHold = 0.0f, crushPhase = 0.0f;
     uint32_t noise = 22222u;
 };
 

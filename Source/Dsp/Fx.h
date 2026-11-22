@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_audio_basics/juce_audio_basics.h>
+#include <array>
 #include <vector>
 
 namespace bass {
@@ -23,13 +24,14 @@ class FxChain {
 public:
     void prepare(double sampleRate, int maxBlock);
     void reset();
-    // mono in, stereo out. loopPos = position in the loop 0..1 (for SWEEP), ppq = song position in beats.
-    void process(const float* mono, float* left, float* right, int n,
+    // stereo in place. ppq = song position in beats (SWEEP follows the loop, SIDECHAIN the beat).
+    void process(float* left, float* right, int n,
                  const FxSettings&, double bpm, double ppqStart, double loopBeats);
 
 private:
     double sr = 48000.0;
-    float lpS1 = 0, lpS2 = 0, lpS3 = 0, lpS4 = 0, cutoffSmoothed = 1000.0f;
+    std::array<float, 4> lpL {}, lpR {};
+    float cutoffSmoothed = 1000.0f;
     std::vector<float> dlL, dlR;
     int dlPos = 0;
     juce::Reverb reverb;
