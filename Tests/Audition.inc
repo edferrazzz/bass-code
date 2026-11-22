@@ -56,7 +56,7 @@ static const std::vector<Cand> candidates {
  { "AFRO HOUSE", afroHouse, 2, 120, { "TRIBAL WARM",  0, 1, 0,  0.60f, 400,  0.15f, 1.4f, 0.25f, 3, 0.50f, 0.5f, 80, 0.20f, 0, 0, 0.0f, 0, 0 } },
 
  { "BRAZILIAN BASS", brazilianBass, 0, 125, { "BR BOUNCE",  3, 1, 0,  0.55f, 700,  0.30f, 2.2f, 0.12f, 1, 0.00f, 0.85f, 40, 0.55f, 30, 0, 0.90f, 0, 0 } },
- { "BRAZILIAN BASS", brazilianBass, 1, 125, { "WOBBLE 1/8", 3, 1, 0,  0.55f, 400,  0.40f, 1.0f, 0.20f, 2, 0.00f, 0.9f, 50, 0.60f, 40, 2, 0.80f, 0, 0 } },
+ { "BRAZILIAN BASS", brazilianBass, 1, 125, { "WOBBLE 8TH", 3, 1, 0,  0.55f, 400,  0.40f, 1.0f, 0.20f, 2, 0.00f, 0.9f, 50, 0.60f, 40, 2, 0.80f, 0, 0 } },
  { "BRAZILIAN BASS", brazilianBass, 2, 125, { "SLAP",       1, 2, 8,  0.50f, 900,  0.30f, 2.4f, 0.08f, 1, 0.20f, 0.3f, 40, 0.45f, 0, 0, 0.0f, 5.0f, 0.03f } },
  { "BRAZILIAN BASS", brazilianBass, 1, 125, { "GROWL",      3, 2, 9,  0.50f, 600,  0.45f, 1.8f, 0.15f, 2, 0.00f, 0.9f, 50, 0.70f, 30, 4, 1.10f, 0, 0 } },
  { "BRAZILIAN BASS", brazilianBass, 0, 125, { "DIRTY SAW",  0, 3, 16, 0.55f, 650,  0.35f, 2.0f, 0.18f, 2, 0.00f, 0.85f, 50, 0.65f, 25, 0, 0.0f, 0, 0 } },
